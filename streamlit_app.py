@@ -6,29 +6,33 @@ from langchain import PromptTemplate, HuggingFaceHub, LLMChain
 from dotenv import load_dotenv
 
 import pandas as pd
-from model import PredictReview
+from model import PredictReview  # Using your enhanced model
 
-#Get Sentiment
-def get_sentiment(text):
+# Global variables to store model and metrics
+model_metrics = None
+
+#Get Sentiment with Model Evaluation
+def get_sentiment(text, show_metrics=False):
+    global model_metrics
     #importing dataset
     data = pd.read_csv("output.csv")
     data['label_num'] = pd.get_dummies(data['label'],drop_first=True)
 
     review_predictor = PredictReview()
-
-    model,coverter = review_predictor.base(data)
-
-    # text = input("Enter the review: ")
-
-    answer = review_predictor.test_sample(text,coverter,model)
-
+    model, converter, metrics = review_predictor.base(data)
+    
+    # Store metrics globally
+    model_metrics = metrics
+    
+    answer = review_predictor.test_sample(text, converter, model)
+    
+    if show_metrics:
+        return answer, metrics
     return answer
 
 # load the Environment Variables. 
 load_dotenv()
 st.set_page_config(page_title="Amazon Product App")
-
-
 
 # Sidebar contents
 with st.sidebar:
@@ -37,8 +41,8 @@ with st.sidebar:
     ## About
     This app is an Review Sentiment Analysis and a LLM-powered chatbot for Amazon Product related queries:
     ''')
-    menu = ['Amazon Review Sentiment Analysis','Product Queries BOT']
-    choice  = st.sidebar.selectbox("Select an option", menu)
+    menu = ['Amazon Review Sentiment Analysis','Product Queries BOT', 'Model Performance']
+    choice = st.sidebar.selectbox("Select an option", menu)
     add_vertical_space(10)
     st.write('Made by [Krish Sanghvi](https://github.com/Krishsanghvii)')
 
@@ -46,9 +50,9 @@ st.header("Your Amazon Assistant 💬")
 st.divider()
 
 def main():
+    global model_metrics
 
     if choice == 'Amazon Review Sentiment Analysis':
-
         st.subheader("Amazon Review Sentiment Analysis")
         with st.form(key='my_form'):
             raw_text = st.text_area("Enter the amazon review here:")
@@ -56,10 +60,53 @@ def main():
 
         if submit_button:
             st.info("Sentiment:")
-            answer = get_sentiment(raw_text)
+            answer, metrics = get_sentiment(raw_text, show_metrics=True)
             st.write(answer)
+            
+            # Show model performance metrics
+            if metrics:
+                with st.expander("Model Performance Metrics"):
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Accuracy", f"{metrics['accuracy']:.3f}")
+                    with col2:
+                        st.metric("Precision", f"{metrics['precision']:.3f}")
+                    with col3:
+                        st.metric("Recall", f"{metrics['recall']:.3f}")
+                    with col4:
+                        st.metric("F1-Score", f"{metrics['f1_score']:.3f}")
+
+    elif choice == 'Model Performance':
+        st.subheader("Model Performance Dashboard")
         
-        # st.divider()
+        if model_metrics is None:
+            # Train model to get metrics
+            data = pd.read_csv("output.csv")
+            data['label_num'] = pd.get_dummies(data['label'],drop_first=True)
+            review_predictor = PredictReview()
+            _, _, model_metrics = review_predictor.base(data)
+        
+        if model_metrics:
+            st.write("### Classification Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Accuracy", f"{model_metrics['accuracy']:.4f}")
+            with col2:
+                st.metric("Precision", f"{model_metrics['precision']:.4f}")
+            with col3:
+                st.metric("Recall", f"{model_metrics['recall']:.4f}")
+            with col4:
+                st.metric("F1-Score", f"{model_metrics['f1_score']:.4f}")
+            
+            st.write("### Confusion Matrix")
+            st.write(model_metrics['confusion_matrix'])
+            
+            # Additional insights
+            st.write("### Model Insights")
+            st.write(f"- **True Negatives:** {model_metrics['confusion_matrix'][0][0]}")
+            st.write(f"- **False Positives:** {model_metrics['confusion_matrix'][0][1]}")
+            st.write(f"- **False Negatives:** {model_metrics['confusion_matrix'][1][0]}")
+            st.write(f"- **True Positives:** {model_metrics['confusion_matrix'][1][1]}")
 
     elif choice == 'Product Queries BOT':
         st.subheader("Product Queries BOT")    
@@ -87,21 +134,13 @@ def main():
             user_input = get_text()
 
         def chain_setup():
-
-
             template = """Your are amazon product related query bot so answer only product related questions, if any other questions asked then don't answer: <|prompter|>{question}<|endoftext|>
             <|assistant|>"""
             
             prompt = PromptTemplate(template=template, input_variables=["question"])
-
             llm=HuggingFaceHub(repo_id="OpenAssistant/oasst-sft-4-pythia-12b-epoch-3.5", model_kwargs={"max_new_tokens":1200})
-
-            llm_chain=LLMChain(
-                llm=llm,
-                prompt=prompt
-            )
+            llm_chain=LLMChain(llm=llm, prompt=prompt)
             return llm_chain
-
 
         # generate response
         def generate_response(question, llm_chain):
